@@ -696,7 +696,7 @@ main { padding: 6px 8px; position: relative; z-index: 1; }
       <div style="background:var(--black);border:1px solid #333;border-left:3px solid #ff9900;padding:12px;margin-bottom:12px;">
         <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;color:#ff9900;text-transform:uppercase;margin-bottom:8px;">☁ ОБЛАЧНАЯ СИНХРОНИЗАЦИЯ (JSONBin.io)</div>
         <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--grey);line-height:1.6;margin-bottom:10px;">
-          Клиенты видят товары автоматически — ключи вшиты в файл. Здесь можно переопределить ключи для этого устройства.
+          Товары синхронизируются на все устройства. <span style="color:#ff9900">⚠ Фото загруженные с компьютера не синхронизируются</span> — используйте URL-ссылки на фото вместо загрузки файлов.
         </div>
         <div id="cloudStatus" style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px;padding:6px 10px;margin-bottom:10px;border:1px solid #333;"></div>
         <div class="form-group" style="margin-bottom:8px;">
@@ -1361,15 +1361,33 @@ function getCloudBin() { return settings.binId  || DEFAULT_BIN_ID; }
 async function cloudSave() {
   if (!hasCloud()) return false;
   try {
-    // Strip base64 images to save space (keep only first 500 chars as marker)
-    const lightProducts = products.map(p => ({
-      ...p,
-      img: p.img && p.img.startsWith('data:') ? p.img : p.img
+    // ВАЖНО: base64 фото не сохраняем в облако — они слишком тяжёлые (лимит JSONBin 100KB)
+    // Фото хранятся только локально на каждом устройстве
+    const cloudProducts = products.map(p => ({
+      id: p.id,
+      name: p.name,
+      desc: p.desc,
+      category: p.category,
+      price: p.price,
+      oldPrice: p.oldPrice,
+      emoji: p.emoji,
+      img: p.img && p.img.startsWith('data:') ? '' : p.img  // URL фото сохраняем, base64 — нет
     }));
-    const data = { products: lightProducts, categories, settings: {
-      name: settings.name, username: settings.username
-      // не сохраняем пароль и ключи в облако
-    }};
+
+    const data = {
+      products: cloudProducts,
+      categories,
+      settings: { name: settings.name, username: settings.username }
+    };
+
+    const json = JSON.stringify(data);
+    const sizeKb = Math.round(json.length / 1024);
+    console.log('Cloud payload size:', sizeKb, 'KB');
+    if (sizeKb > 95) {
+      showToast('✗ Данные слишком большие (' + sizeKb + 'KB). Уберите лишнее.', false);
+      return false;
+    }
+
     const res = await fetch(`https://api.jsonbin.io/v3/b/${getCloudBin()}`, {
       method: 'PUT',
       headers: {
@@ -1378,15 +1396,18 @@ async function cloudSave() {
         'X-Bin-Versioning': 'false',
         'X-Bin-Private': 'false'
       },
-      body: JSON.stringify(data)
+      body: json
     });
+
     if (!res.ok) {
       const err = await res.text();
       console.error('CloudSave error:', res.status, err);
+      showToast('✗ Ошибка ' + res.status + ': ' + err.slice(0,50), false);
     }
     return res.ok;
   } catch(e) {
     console.error('CloudSave exception:', e);
+    showToast('✗ Нет соединения', false);
     return false;
   }
 }

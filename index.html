@@ -693,6 +693,20 @@ main { padding: 6px 8px; position: relative; z-index: 1; }
         </div>
       </div>
       <br>
+      <div style="background:var(--black);border:1px solid #333;border-left:3px solid #ff9900;padding:12px;margin-bottom:12px;">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;color:#ff9900;text-transform:uppercase;margin-bottom:8px;">☁ ОБЛАЧНАЯ СИНХРОНИЗАЦИЯ (JSONBin.io)</div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--grey);line-height:1.6;margin-bottom:10px;">
+          Чтобы товары были видны на всех устройствах — зарегистрируйтесь на <b style="color:var(--white2)">jsonbin.io</b>, создайте бин и вставьте данные ниже.
+        </div>
+        <div class="form-group" style="margin-bottom:8px;">
+          <label>API KEY (X-Master-Key)</label>
+          <input type="text" id="settingBinKey" placeholder="$2a$10$...">
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label>BIN ID</label>
+          <input type="text" id="settingBinId" placeholder="64f3a...">
+        </div>
+      </div>
       <button class="btn-primary" onclick="saveSettings()">💾 СОХРАНИТЬ</button>
       <button class="btn-primary" id="recompressBtn" onclick="recompressAll()" style="background:var(--black3);border:2px solid var(--red);color:var(--red);box-shadow:none;margin-top:6px">🗜 СЖАТЬ ВСЕ ФОТО (освободить место)</button>
     </div>
@@ -702,7 +716,8 @@ main { padding: 6px 8px; position: relative; z-index: 1; }
       <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--grey);letter-spacing:.5px;line-height:1.5;margin-bottom:12px;">
         Данные хранятся в браузере. Чтобы перенести товары в Telegram — экспортируйте файл на компьютере, затем импортируйте его открыв каталог в Telegram.
       </div>
-      <button class="btn-primary" onclick="exportData()" style="margin-bottom:8px;">📤 ЭКСПОРТ — скачать файл с товарами</button>
+      <button class="btn-primary" id="syncBtn" onclick="syncCloud()" style="background:var(--black3);border:2px solid #ff9900;color:#ff9900;box-shadow:none;margin-bottom:8px;">☁ СИНХРОНИЗИРОВАТЬ С ОБЛАКОМ</button>
+      <button class="btn-primary" onclick="exportData()" style="background:var(--black3);border:2px solid var(--red);color:var(--red);box-shadow:none;margin-bottom:8px;">📤 ЭКСПОРТ — скачать файл с товарами</button>
       <div style="position:relative;">
         <button class="btn-primary" onclick="document.getElementById('importFile').click()" style="background:var(--black3);border:2px solid var(--red);color:var(--red);box-shadow:none;">📥 ИМПОРТ — загрузить файл с товарами</button>
         <input type="file" id="importFile" accept=".json" onchange="importData(event)" style="display:none;">
@@ -792,7 +807,7 @@ let activeCategory = 'Все';
 let currentProduct = null;
 let pendingImageB64 = ''; // base64 for new product
 
-function persist() {
+function persist(cloud = true) {
   try {
     S.set("products_v2", products);
     S.set("categories_v2", categories);
@@ -802,6 +817,7 @@ function persist() {
       showToast("⚠ Мало места! Удалите часть фото или товаров");
     }
   }
+  if (cloud && hasCloud()) cloudSave();
 }
 
 // ─── HELPERS ───
@@ -1037,6 +1053,8 @@ function openAdmin() {
   document.getElementById('settingName').value = settings.name || '';
   document.getElementById('settingPass').value = '';
   document.getElementById('settingUsername').value = settings.username || '';
+  document.getElementById('settingBinKey').value = settings.binKey || '';
+  document.getElementById('settingBinId').value = settings.binId || '';
   renderCatChips(); renderCatSelect(); renderAdminProducts(); cancelEdit(); showStorageInfo();
 }
 function closeAdmin() {
@@ -1048,9 +1066,13 @@ function saveSettings() {
   const n = document.getElementById('settingName').value.trim();
   const p = document.getElementById('settingPass').value.trim();
   const u = document.getElementById('settingUsername').value.trim();
+  const bk = document.getElementById('settingBinKey').value.trim();
+  const bi = document.getElementById('settingBinId').value.trim();
   if (n) settings.name = n;
   if (p) settings.pass = p;
   settings.username = u;
+  if (bk) settings.binKey = bk;
+  if (bi) settings.binId = bi;
   persist();
   showToast('Настройки сохранены!', true);
 }
@@ -1305,6 +1327,63 @@ function cancelEdit() {
   clearImage({ stopPropagation:()=>{} });
 }
 
+// ─── CLOUD SYNC (JSONBin.io) ───
+function hasCloud() {
+  return settings.binKey && settings.binId;
+}
+
+async function cloudSave() {
+  if (!hasCloud()) return false;
+  try {
+    const data = { products, categories, settings };
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${settings.binId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Master-Key': settings.binKey,
+        'X-Bin-Versioning': 'false'
+      },
+      body: JSON.stringify(data)
+    });
+    return res.ok;
+  } catch(e) { return false; }
+}
+
+async function cloudLoad() {
+  if (!hasCloud()) return false;
+  try {
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${settings.binId}/latest`, {
+      headers: { 'X-Master-Key': settings.binKey }
+    });
+    if (!res.ok) return false;
+    const json = await res.json();
+    const data = json.record;
+    if (!data.products) return false;
+    products = data.products;
+    categories = data.categories || ['Все'];
+    if (!categories.includes('Все')) categories.unshift('Все');
+    // Keep local password/keys in case they differ
+    const localPass = settings.pass;
+    const localKey = settings.binKey;
+    const localBinId = settings.binId;
+    if (data.settings) settings = { ...data.settings, pass: localPass, binKey: localKey, binId: localBinId };
+    persist();
+    return true;
+  } catch(e) { return false; }
+}
+
+async function syncCloud() {
+  const btn = document.getElementById('syncBtn');
+  if (btn) { btn.textContent = '⏳ Синхронизация...'; btn.disabled = true; }
+  const ok = await cloudLoad();
+  renderCatalog();
+  renderAdminProducts();
+  renderCatChips(); renderCatSelect();
+  showStorageInfo();
+  if (btn) { btn.textContent = '☁ СИНХРОНИЗИРОВАТЬ С ОБЛАКОМ'; btn.disabled = false; }
+  showToast(ok ? 'Данные загружены из облака!' : 'Ошибка — проверьте API KEY и BIN ID', ok);
+}
+
 // ─── EXPORT / IMPORT ───
 function exportData() {
   const data = {
@@ -1359,8 +1438,16 @@ if (window.Telegram?.WebApp) { Telegram.WebApp.ready(); Telegram.WebApp.expand()
 // ─── INIT ───
 if (!categories.includes('Все')) categories.unshift('Все');
 setupDropZone();
-renderCatalog();
 updateCartBadge();
+// Auto-load from cloud on start
+if (hasCloud()) {
+  cloudLoad().then(ok => {
+    renderCatalog();
+    if (ok) console.log('Loaded from cloud');
+  });
+} else {
+  renderCatalog();
+}
 </script>
 </body>
 </html>

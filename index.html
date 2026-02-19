@@ -1361,18 +1361,34 @@ function getCloudBin() { return settings.binId  || DEFAULT_BIN_ID; }
 async function cloudSave() {
   if (!hasCloud()) return false;
   try {
-    const data = { products, categories, settings };
+    // Strip base64 images to save space (keep only first 500 chars as marker)
+    const lightProducts = products.map(p => ({
+      ...p,
+      img: p.img && p.img.startsWith('data:') ? p.img : p.img
+    }));
+    const data = { products: lightProducts, categories, settings: {
+      name: settings.name, username: settings.username
+      // не сохраняем пароль и ключи в облако
+    }};
     const res = await fetch(`https://api.jsonbin.io/v3/b/${getCloudBin()}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         'X-Master-Key': getCloudKey(),
-        'X-Bin-Versioning': 'false'
+        'X-Bin-Versioning': 'false',
+        'X-Bin-Private': 'false'
       },
       body: JSON.stringify(data)
     });
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('CloudSave error:', res.status, err);
+    }
     return res.ok;
-  } catch(e) { return false; }
+  } catch(e) {
+    console.error('CloudSave exception:', e);
+    return false;
+  }
 }
 
 async function cloudLoad(force = false) {
@@ -1420,9 +1436,24 @@ async function syncCloud() {
     renderCatalog(); renderAdminProducts(); renderCatChips(); renderCatSelect(); showStorageInfo();
     showToast(ok ? '✓ Данные загружены из облака!' : '✗ Ошибка — проверьте ключи', ok);
   } else {
-    // Upload to cloud
-    ok = await cloudSave();
-    showToast(ok ? '✓ Данные выгружены в облако!' : '✗ Ошибка при сохранении', ok);
+    // Upload to cloud — test with GET first to validate keys
+    if (btn) btn.textContent = '⏳ Проверка ключей...';
+    try {
+      const testRes = await fetch(`https://api.jsonbin.io/v3/b/${getCloudBin()}/latest`, {
+        headers: { 'X-Master-Key': getCloudKey() }
+      });
+      if (!testRes.ok) {
+        const errText = await testRes.text();
+        showToast(`✗ Ошибка ${testRes.status}: ${errText.slice(0,60)}`, false);
+        if (btn) { btn.textContent = '☁ СИНХРОНИЗИРОВАТЬ С ОБЛАКОМ'; btn.disabled = false; }
+        return;
+      }
+      if (btn) btn.textContent = '⏳ Выгружаю...';
+      ok = await cloudSave();
+      showToast(ok ? '✓ Данные выгружены в облако!' : '✗ Ошибка при сохранении', ok);
+    } catch(e) {
+      showToast('✗ Нет соединения: ' + e.message.slice(0,40), false);
+    }
   }
 
   if (btn) { btn.textContent = '☁ СИНХРОНИЗИРОВАТЬ С ОБЛАКОМ'; btn.disabled = false; }

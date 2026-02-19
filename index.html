@@ -698,6 +698,18 @@ main { padding: 6px 8px; position: relative; z-index: 1; }
     </div>
 
     <div class="admin-section">
+      <div class="section-title">ПЕРЕНОС ДАННЫХ</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--grey);letter-spacing:.5px;line-height:1.5;margin-bottom:12px;">
+        Данные хранятся в браузере. Чтобы перенести товары в Telegram — экспортируйте файл на компьютере, затем импортируйте его открыв каталог в Telegram.
+      </div>
+      <button class="btn-primary" onclick="exportData()" style="margin-bottom:8px;">📤 ЭКСПОРТ — скачать файл с товарами</button>
+      <div style="position:relative;">
+        <button class="btn-primary" onclick="document.getElementById('importFile').click()" style="background:var(--black3);border:2px solid var(--red);color:var(--red);box-shadow:none;">📥 ИМПОРТ — загрузить файл с товарами</button>
+        <input type="file" id="importFile" accept=".json" onchange="importData(event)" style="display:none;">
+      </div>
+    </div>
+
+    <div class="admin-section">
       <div class="section-title">КАТЕГОРИИ</div>
       <div class="cat-chips" id="catChips"></div>
       <div class="add-cat-row">
@@ -1291,6 +1303,54 @@ function cancelEdit() {
   document.getElementById('cancelEditBtn').classList.remove('visible');
   pendingImageB64 = '';
   clearImage({ stopPropagation:()=>{} });
+}
+
+// ─── EXPORT / IMPORT ───
+function exportData() {
+  const data = {
+    products,
+    categories,
+    settings,
+    exportedAt: new Date().toISOString(),
+    version: 2
+  };
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'catalog-backup.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Файл скачан!', true);
+}
+
+function importData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.products || !Array.isArray(data.products)) {
+        showToast('Неверный формат файла!'); return;
+      }
+      if (!confirm(`Импортировать ${data.products.length} товаров? Текущие данные будут заменены.`)) return;
+      products = data.products;
+      categories = data.categories || ['Все'];
+      if (!categories.includes('Все')) categories.unshift('Все');
+      if (data.settings) settings = data.settings;
+      persist();
+      renderCatChips(); renderCatSelect(); renderAdminProducts();
+      showStorageInfo();
+      renderCatalog();
+      showToast(`Импортировано ${products.length} товаров!`, true);
+    } catch(err) {
+      showToast('Ошибка чтения файла!');
+    }
+    event.target.value = '';
+  };
+  reader.readAsText(file);
 }
 
 // ─── TELEGRAM ───

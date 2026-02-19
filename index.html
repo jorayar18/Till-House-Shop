@@ -696,8 +696,9 @@ main { padding: 6px 8px; position: relative; z-index: 1; }
       <div style="background:var(--black);border:1px solid #333;border-left:3px solid #ff9900;padding:12px;margin-bottom:12px;">
         <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;color:#ff9900;text-transform:uppercase;margin-bottom:8px;">☁ ОБЛАЧНАЯ СИНХРОНИЗАЦИЯ (JSONBin.io)</div>
         <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--grey);line-height:1.6;margin-bottom:10px;">
-          Чтобы товары были видны на всех устройствах — зарегистрируйтесь на <b style="color:var(--white2)">jsonbin.io</b>, создайте бин и вставьте данные ниже.
+          Клиенты видят товары автоматически — ключи вшиты в файл. Здесь можно переопределить ключи для этого устройства.
         </div>
+        <div id="cloudStatus" style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px;padding:6px 10px;margin-bottom:10px;border:1px solid #333;"></div>
         <div class="form-group" style="margin-bottom:8px;">
           <label>API KEY (X-Master-Key)</label>
           <input type="text" id="settingBinKey" placeholder="$2a$10$...">
@@ -794,6 +795,11 @@ const S = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
   set(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
 };
+
+// ── ВСТАВЬТЕ СЮДА ВАШИ ДАННЫЕ JSONBIN ──────────────────────────
+const DEFAULT_BIN_KEY = ''; // сюда вставить API Key с jsonbin.io
+const DEFAULT_BIN_ID  = ''; // сюда вставить BIN ID
+// ────────────────────────────────────────────────────────────────
 
 let products  = S.get('products_v2', [
   { id:1, name:'ПРИМЕР ТОВАР I',   desc:'Описание товара. Измените в админ-панели.', category:'Основное', price:1500, oldPrice:2000, emoji:'🔥', img:'' },
@@ -1055,7 +1061,7 @@ function openAdmin() {
   document.getElementById('settingUsername').value = settings.username || '';
   document.getElementById('settingBinKey').value = settings.binKey || '';
   document.getElementById('settingBinId').value = settings.binId || '';
-  renderCatChips(); renderCatSelect(); renderAdminProducts(); cancelEdit(); showStorageInfo();
+  renderCatChips(); renderCatSelect(); renderAdminProducts(); cancelEdit(); showStorageInfo(); showCloudStatus();
 }
 function closeAdmin() {
   document.getElementById('adminOverlay').classList.remove('open');
@@ -1097,6 +1103,23 @@ function showStorageInfo() {
     if (text) { text.textContent = used + " МБ / 5 МБ"; text.style.color = color; }
     if (hint) { hint.textContent = pct + "% — " + label; hint.style.color = color; }
   } catch(e) {}
+}
+
+function showCloudStatus() {
+  const el = document.getElementById('cloudStatus');
+  if (!el) return;
+  const keyOk = !!(settings.binKey || DEFAULT_BIN_KEY);
+  const binOk = !!(settings.binId  || DEFAULT_BIN_ID);
+  if (keyOk && binOk) {
+    const src = DEFAULT_BIN_KEY ? 'вшиты в файл' : 'введены вручную';
+    el.style.borderColor = '#34d399';
+    el.style.color = '#34d399';
+    el.textContent = '✓ ОБЛАКО ПОДКЛЮЧЕНО — ключи ' + src;
+  } else {
+    el.style.borderColor = '#ff9900';
+    el.style.color = '#ff9900';
+    el.textContent = '⚠ ОБЛАКО НЕ НАСТРОЕНО — введите API KEY и BIN ID';
+  }
 }
 
 function compressBase64(b64, maxPx, quality) {
@@ -1329,18 +1352,21 @@ function cancelEdit() {
 
 // ─── CLOUD SYNC (JSONBin.io) ───
 function hasCloud() {
-  return settings.binKey && settings.binId;
+  return (settings.binKey || DEFAULT_BIN_KEY) && (settings.binId || DEFAULT_BIN_ID);
 }
+
+function getCloudKey() { return settings.binKey || DEFAULT_BIN_KEY; }
+function getCloudBin() { return settings.binId  || DEFAULT_BIN_ID; }
 
 async function cloudSave() {
   if (!hasCloud()) return false;
   try {
     const data = { products, categories, settings };
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${settings.binId}`, {
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${getCloudBin()}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        'X-Master-Key': settings.binKey,
+        'X-Master-Key': getCloudKey(),
         'X-Bin-Versioning': 'false'
       },
       body: JSON.stringify(data)
@@ -1349,39 +1375,57 @@ async function cloudSave() {
   } catch(e) { return false; }
 }
 
-async function cloudLoad() {
+async function cloudLoad(force = false) {
   if (!hasCloud()) return false;
   try {
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${settings.binId}/latest`, {
-      headers: { 'X-Master-Key': settings.binKey }
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${getCloudBin()}/latest`, {
+      headers: { 'X-Master-Key': getCloudKey() }
     });
     if (!res.ok) return false;
     const json = await res.json();
     const data = json.record;
-    if (!data.products) return false;
+    if (!data.products || !Array.isArray(data.products)) return false;
+
+    // Only load from cloud if it has products, OR if force=true (manual sync button)
+    if (!force && data.products.length === 0) return false;
+
     products = data.products;
     categories = data.categories || ['Все'];
     if (!categories.includes('Все')) categories.unshift('Все');
-    // Keep local password/keys in case they differ
     const localPass = settings.pass;
     const localKey = settings.binKey;
     const localBinId = settings.binId;
     if (data.settings) settings = { ...data.settings, pass: localPass, binKey: localKey, binId: localBinId };
-    persist();
+    persist(false); // save locally but don't trigger cloud save loop
     return true;
   } catch(e) { return false; }
 }
 
 async function syncCloud() {
   const btn = document.getElementById('syncBtn');
+  if (!hasCloud()) { showToast('Сначала введите API KEY и BIN ID!'); return; }
+
+  const action = confirm(
+    'Выберите действие:\n\n' +
+    'OK — ЗАГРУЗИТЬ из облака (заменит локальные данные)\n' +
+    'Отмена — ВЫГРУЗИТЬ в облако (перезапишет облако)'
+  );
+
   if (btn) { btn.textContent = '⏳ Синхронизация...'; btn.disabled = true; }
-  const ok = await cloudLoad();
-  renderCatalog();
-  renderAdminProducts();
-  renderCatChips(); renderCatSelect();
-  showStorageInfo();
+
+  let ok;
+  if (action) {
+    // Download from cloud
+    ok = await cloudLoad(true);
+    renderCatalog(); renderAdminProducts(); renderCatChips(); renderCatSelect(); showStorageInfo();
+    showToast(ok ? '✓ Данные загружены из облака!' : '✗ Ошибка — проверьте ключи', ok);
+  } else {
+    // Upload to cloud
+    ok = await cloudSave();
+    showToast(ok ? '✓ Данные выгружены в облако!' : '✗ Ошибка при сохранении', ok);
+  }
+
   if (btn) { btn.textContent = '☁ СИНХРОНИЗИРОВАТЬ С ОБЛАКОМ'; btn.disabled = false; }
-  showToast(ok ? 'Данные загружены из облака!' : 'Ошибка — проверьте API KEY и BIN ID', ok);
 }
 
 // ─── EXPORT / IMPORT ───

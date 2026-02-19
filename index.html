@@ -679,6 +679,8 @@ main { padding: 14px; position: relative; z-index: 1; }
       </div>
       <br>
       <button class="btn-primary" onclick="saveSettings()">💾 СОХРАНИТЬ</button>
+      <button class="btn-primary" id="recompressBtn" onclick="recompressAll()" style="background:var(--black3);border:2px solid var(--red);color:var(--red);box-shadow:none;margin-top:6px">🗜 СЖАТЬ ВСЕ ФОТО (освободить место)</button>
+      <div id="storageInfo" style="font-family:Barlow Condensed,sans-serif;font-size:12px;letter-spacing:1px;color:var(--grey);margin-top:8px;text-align:center"></div>
     </div>
 
     <div class="admin-section">
@@ -1009,7 +1011,7 @@ function openAdmin() {
   document.getElementById('settingName').value = settings.name || '';
   document.getElementById('settingPass').value = '';
   document.getElementById('settingUsername').value = settings.username || '';
-  renderCatChips(); renderCatSelect(); renderAdminProducts(); cancelEdit();
+  renderCatChips(); renderCatSelect(); renderAdminProducts(); cancelEdit(); showStorageInfo();
 }
 function closeAdmin() {
   document.getElementById('adminOverlay').classList.remove('open');
@@ -1025,6 +1027,62 @@ function saveSettings() {
   settings.username = u;
   persist();
   showToast('Настройки сохранены!', true);
+}
+
+// ─── STORAGE TOOLS ───
+function showStorageInfo() {
+  const el = document.getElementById("storageInfo");
+  if (!el) return;
+  try {
+    let total = 0;
+    for (let k in localStorage) {
+      if (localStorage.hasOwnProperty(k)) total += (localStorage[k].length + k.length) * 2;
+    }
+    const used = (total / 1024 / 1024).toFixed(2);
+    const pct = Math.min(100, Math.round(total / 1024 / 1024 / 5 * 100));
+    const color = pct > 80 ? "var(--red)" : pct > 50 ? "#ff9900" : "var(--grey)";
+    el.innerHTML = `<span style="color:${color}">// ПАМЯТЬ: ${used} МБ из ~5 МБ (${pct}%) //</span>`;
+  } catch(e) {}
+}
+
+function compressBase64(b64, maxPx, quality) {
+  return new Promise(resolve => {
+    if (!b64 || !b64.startsWith("data:image")) { resolve(b64); return; }
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if (w > maxPx || h > maxPx) {
+        if (w >= h) { h = Math.round(h * maxPx / w); w = maxPx; }
+        else { w = Math.round(w * maxPx / h); h = maxPx; }
+      }
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(b64);
+    img.src = b64;
+  });
+}
+
+async function recompressAll() {
+  const btn = document.getElementById("recompressBtn");
+  btn.textContent = "⏳ Сжимаю...";
+  btn.disabled = true;
+  let count = 0;
+  for (let i = 0; i < products.length; i++) {
+    if (products[i].img && products[i].img.startsWith("data:image")) {
+      const before = products[i].img.length;
+      products[i].img = await compressBase64(products[i].img, 500, 0.6);
+      if (products[i].img.length < before) count++;
+    }
+  }
+  persist();
+  showStorageInfo();
+  btn.textContent = "🗜 СЖАТЬ ВСЕ ФОТО (освободить место)";
+  btn.disabled = false;
+  showToast(`Готово! Сжато ${count} фото`, true);
+  renderAdminProducts();
 }
 
 // ─── CATEGORIES ───

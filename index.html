@@ -662,6 +662,20 @@ main { padding: 6px 8px; position: relative; z-index: 1; }
   </div>
   <div class="admin-body">
 
+    <div id="storagePanel" style="background:var(--black3);border:1px solid #2a2a2a;border-left:3px solid var(--red);padding:12px 14px;margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--white2);">// ПАМЯТЬ БРАУЗЕРА //</span>
+        <span id="storageText" style="font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:1px;color:var(--white);"></span>
+      </div>
+      <div style="background:var(--black);height:8px;width:100%;border:1px solid #333;overflow:hidden;">
+        <div id="storageBar" style="height:100%;width:0%;background:var(--red);transition:width .5s ease;box-shadow:0 0 10px var(--red-glow);"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:5px;">
+        <span id="storageHint" style="font-family:'Barlow Condensed',sans-serif;font-size:10px;letter-spacing:1px;color:var(--grey);"></span>
+        <span style="font-family:'Barlow Condensed',sans-serif;font-size:10px;letter-spacing:1px;color:var(--grey);">MAX ~5 МБ</span>
+      </div>
+    </div>
+
     <div class="admin-section">
       <div class="section-title">НАСТРОЙКИ МАГАЗИНА</div>
       <div class="settings-list">
@@ -681,7 +695,6 @@ main { padding: 6px 8px; position: relative; z-index: 1; }
       <br>
       <button class="btn-primary" onclick="saveSettings()">💾 СОХРАНИТЬ</button>
       <button class="btn-primary" id="recompressBtn" onclick="recompressAll()" style="background:var(--black3);border:2px solid var(--red);color:var(--red);box-shadow:none;margin-top:6px">🗜 СЖАТЬ ВСЕ ФОТО (освободить место)</button>
-      <div id="storageInfo" style="font-family:Barlow Condensed,sans-serif;font-size:12px;letter-spacing:1px;color:var(--grey);margin-top:8px;text-align:center"></div>
     </div>
 
     <div class="admin-section">
@@ -1032,8 +1045,6 @@ function saveSettings() {
 
 // ─── STORAGE TOOLS ───
 function showStorageInfo() {
-  const el = document.getElementById("storageInfo");
-  if (!el) return;
   try {
     let total = 0;
     for (let k in localStorage) {
@@ -1041,8 +1052,16 @@ function showStorageInfo() {
     }
     const used = (total / 1024 / 1024).toFixed(2);
     const pct = Math.min(100, Math.round(total / 1024 / 1024 / 5 * 100));
-    const color = pct > 80 ? "var(--red)" : pct > 50 ? "#ff9900" : "var(--grey)";
-    el.innerHTML = `<span style="color:${color}">// ПАМЯТЬ: ${used} МБ из ~5 МБ (${pct}%) //</span>`;
+    const color = pct > 80 ? "var(--red)" : pct > 60 ? "#ff9900" : "#34d399";
+    const label = pct > 80 ? "⚠ МАЛО МЕСТА" : pct > 60 ? "ЗАПОЛНЕНО" : "ОК";
+
+    const bar = document.getElementById("storageBar");
+    const text = document.getElementById("storageText");
+    const hint = document.getElementById("storageHint");
+
+    if (bar) { bar.style.width = pct + "%"; bar.style.background = color; bar.style.boxShadow = `0 0 10px ${color}`; }
+    if (text) { text.textContent = used + " МБ / 5 МБ"; text.style.color = color; }
+    if (hint) { hint.textContent = pct + "% — " + label; hint.style.color = color; }
   } catch(e) {}
 }
 

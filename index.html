@@ -1263,12 +1263,18 @@ function toggleHide(id) {
   showToast(p.hidden ? '🚫 Товар скрыт' : '👁 Товар отображается', true);
 }
 
-// ─── DRAG & SORT ───
+// ─── DRAG & SORT (mouse + touch) ───
 let dragSrcId = null;
+let touchDragItem = null;
+let touchPlaceholder = null;
+let touchStartY = 0;
 
 function setupDragSort() {
-  const items = document.querySelectorAll('.product-item[draggable]');
+  const list = document.getElementById('adminProductList');
+  const items = list.querySelectorAll('.product-item[draggable]');
+
   items.forEach(item => {
+    // ── MOUSE drag ──
     item.addEventListener('dragstart', e => {
       dragSrcId = +item.dataset.id;
       item.classList.add('dragging');
@@ -1276,29 +1282,83 @@ function setupDragSort() {
     });
     item.addEventListener('dragend', () => {
       item.classList.remove('dragging');
-      document.querySelectorAll('.product-item').forEach(i => i.classList.remove('drag-over'));
+      list.querySelectorAll('.product-item').forEach(i => i.classList.remove('drag-over'));
     });
     item.addEventListener('dragover', e => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      document.querySelectorAll('.product-item').forEach(i => i.classList.remove('drag-over'));
+      list.querySelectorAll('.product-item').forEach(i => i.classList.remove('drag-over'));
       item.classList.add('drag-over');
     });
     item.addEventListener('drop', e => {
       e.preventDefault();
       const targetId = +item.dataset.id;
       if (dragSrcId === targetId) return;
-      const srcIdx = products.findIndex(p => p.id === dragSrcId);
-      const tgtIdx = products.findIndex(p => p.id === targetId);
-      if (srcIdx < 0 || tgtIdx < 0) return;
-      // Reorder
-      const [moved] = products.splice(srcIdx, 1);
-      products.splice(tgtIdx, 0, moved);
-      persist();
-      renderAdminProducts();
-      renderCatalog();
+      reorderProducts(dragSrcId, targetId);
+    });
+
+    // ── TOUCH drag ──
+    const handle = item.querySelector('.drag-handle');
+    if (!handle) return;
+
+    handle.addEventListener('touchstart', e => {
+      e.preventDefault();
+      touchDragItem = item;
+      touchStartY = e.touches[0].clientY;
+      item.classList.add('dragging');
+      // Create placeholder
+      touchPlaceholder = document.createElement('div');
+      touchPlaceholder.style.cssText = `height:${item.offsetHeight}px;background:rgba(204,0,0,0.1);border:2px dashed var(--red);margin-bottom:2px;`;
+      item.parentNode.insertBefore(touchPlaceholder, item.nextSibling);
+    }, { passive: false });
+
+    handle.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (!touchDragItem) return;
+      const touch = e.touches[0];
+      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      const target = el?.closest('.product-item');
+      if (target && target !== touchDragItem) {
+        list.querySelectorAll('.product-item').forEach(i => i.classList.remove('drag-over'));
+        target.classList.add('drag-over');
+        // Move placeholder
+        const rect = target.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        if (touch.clientY < mid) {
+          target.parentNode.insertBefore(touchPlaceholder, target);
+        } else {
+          target.parentNode.insertBefore(touchPlaceholder, target.nextSibling);
+        }
+      }
+    }, { passive: false });
+
+    handle.addEventListener('touchend', e => {
+      if (!touchDragItem) return;
+      const el = document.elementFromPoint(
+        e.changedTouches[0].clientX, e.changedTouches[0].clientY
+      );
+      const target = el?.closest('.product-item');
+      touchDragItem.classList.remove('dragging');
+      list.querySelectorAll('.product-item').forEach(i => i.classList.remove('drag-over'));
+      if (touchPlaceholder) touchPlaceholder.remove();
+
+      if (target && target !== touchDragItem) {
+        reorderProducts(+touchDragItem.dataset.id, +target.dataset.id);
+      }
+      touchDragItem = null;
+      touchPlaceholder = null;
     });
   });
+}
+
+function reorderProducts(srcId, tgtId) {
+  const srcIdx = products.findIndex(p => p.id === srcId);
+  const tgtIdx = products.findIndex(p => p.id === tgtId);
+  if (srcIdx < 0 || tgtIdx < 0) return;
+  const [moved] = products.splice(srcIdx, 1);
+  products.splice(tgtIdx, 0, moved);
+  persist();
+  renderAdminProducts();
+  renderCatalog();
 }
 
 function deleteProduct(id) {
@@ -1350,7 +1410,7 @@ async function cloudSave() {
     const data = {
       products: cloudProducts,
       categories,
-      settings: { name: settings.name, username: settings.username }
+      settings: { name: settings.name, username: settings.username, pass: settings.pass }
     };
 
     const json = JSON.stringify(data);
@@ -1402,10 +1462,14 @@ async function cloudLoad(force = false) {
     products = data.products;
     categories = data.categories || ['Все'];
     if (!categories.includes('Все')) categories.unshift('Все');
-    const localPass = settings.pass;
     const localKey = settings.binKey;
     const localBinId = settings.binId;
-    if (data.settings) settings = { ...data.settings, pass: localPass, binKey: localKey, binId: localBinId };
+    if (data.settings) settings = {
+      ...data.settings,
+      // ключи всегда берём локальные (вшиты в файл), пароль берём из облака
+      binKey: localKey,
+      binId: localBinId
+    };
     persist(false); // save locally but don't trigger cloud save loop
     return true;
   } catch(e) { return false; }

@@ -510,9 +510,18 @@ main { padding: 6px 8px; position: relative; z-index: 1; }
 .product-item {
   background: var(--black3); border: 1px solid #2a2a2a; border-left: 3px solid #333;
   padding: 10px 12px; display: flex; align-items: center; gap: 10px;
-  transition: border-color .2s;
+  transition: border-color .2s, opacity .2s;
+  cursor: grab; user-select: none;
 }
+.product-item:active { cursor: grabbing; }
 .product-item:hover { border-left-color: var(--red); }
+.product-item.hidden-product { opacity: .45; border-left-color: var(--grey) !important; }
+.product-item.drag-over { border: 2px dashed var(--red); box-shadow: 0 0 12px var(--red-glow); }
+.product-item.dragging { opacity: .3; }
+.drag-handle {
+  color: var(--grey); font-size: 16px; flex-shrink: 0; cursor: grab; padding: 0 2px;
+  line-height: 1;
+}
 .product-item-thumb {
   width: 44px; height: 44px; flex-shrink: 0;
   background: var(--black2); display: flex; align-items: center; justify-content: center;
@@ -523,14 +532,18 @@ main { padding: 6px 8px; position: relative; z-index: 1; }
 .product-item-name { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .product-item-meta { font-size: 11px; color: var(--grey); letter-spacing: .5px; margin-top: 2px; }
 .product-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
-.btn-edit, .btn-del {
+.btn-edit, .btn-del, .btn-hide {
   background: none; border: 1px solid #333;
-  font-size: 14px; padding: 5px 8px; cursor: pointer; transition: all .2s;
+  font-size: 13px; padding: 5px 7px; cursor: pointer; transition: all .2s;
 }
 .btn-edit { color: var(--white2); }
 .btn-edit:hover { border-color: var(--white2); background: var(--black2); }
 .btn-del { color: var(--red); }
 .btn-del:hover { background: var(--red); color: var(--white); border-color: var(--red); }
+.btn-hide { color: var(--grey); }
+.btn-hide:hover { border-color: #ff9900; color: #ff9900; }
+.btn-hide.is-hidden { color: #34d399; border-color: #34d399; }
+.btn-hide.is-hidden:hover { background: #34d399; color: var(--black); }
 
 /* TOAST */
 .toast {
@@ -839,6 +852,7 @@ function setCategory(c) { activeCategory = c; renderCatalog(); }
 function getFiltered() {
   const q = (document.getElementById('searchInput')?.value||'').toLowerCase().trim();
   return products.filter(p => {
+    if (p.hidden) return false;
     const mc = activeCategory === 'Все' || p.category === activeCategory;
     const mq = !q || p.name.toLowerCase().includes(q) || (p.desc||'').toLowerCase().includes(q);
     return mc && mq;
@@ -1164,20 +1178,30 @@ function applyUrl() {
 // ─── PRODUCT CRUD ───
 function renderAdminProducts() {
   const el = document.getElementById('adminProductList');
-  el.innerHTML = products.length ? products.map(p => {
+  if (!products.length) {
+    el.innerHTML = `<div style="color:var(--grey);text-align:center;padding:24px;font-family:'Barlow Condensed',sans-serif;letter-spacing:2px;text-transform:uppercase;font-size:13px">// Нет товаров //</div>`;
+    return;
+  }
+  el.innerHTML = products.map(p => {
     const thumb = p.img ? `<img src="${p.img}" alt="">` : (p.emoji||'📦');
-    return `<div class="product-item">
+    const hiddenClass = p.hidden ? ' hidden-product' : '';
+    const hideLabel = p.hidden ? '👁 ПОКАЗАТЬ' : '🚫 СКРЫТЬ';
+    const hideBtnClass = p.hidden ? ' is-hidden' : '';
+    return `<div class="product-item${hiddenClass}" draggable="true" data-id="${p.id}">
+      <div class="drag-handle" title="Перетащить">⠿</div>
       <div class="product-item-thumb">${thumb}</div>
       <div class="product-item-info">
-        <div class="product-item-name">${p.name}</div>
+        <div class="product-item-name">${p.hidden ? '🚫 ' : ''}${p.name}</div>
         <div class="product-item-meta">${p.category} · ${fmt(p.price)}</div>
       </div>
       <div class="product-item-actions">
+        <button class="btn-hide${hideBtnClass}" onclick="toggleHide(${p.id})" title="${hideLabel}">${p.hidden ? '👁' : '🚫'}</button>
         <button class="btn-edit" onclick="editProduct(${p.id})">✏</button>
         <button class="btn-del" onclick="deleteProduct(${p.id})">🗑</button>
       </div>
     </div>`;
-  }).join('') : `<div style="color:var(--grey);text-align:center;padding:24px;font-family:'Barlow Condensed',sans-serif;letter-spacing:2px;text-transform:uppercase;font-size:13px">// Нет товаров //</div>`;
+  }).join('');
+  setupDragSort();
 }
 
 function saveProduct() {
@@ -1227,6 +1251,54 @@ function editProduct(id) {
   document.getElementById('cancelEditBtn').classList.add('visible');
 
   document.getElementById('fName').scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+function toggleHide(id) {
+  const p = products.find(x => x.id === id);
+  if (!p) return;
+  p.hidden = !p.hidden;
+  persist();
+  renderAdminProducts();
+  renderCatalog();
+  showToast(p.hidden ? '🚫 Товар скрыт' : '👁 Товар отображается', true);
+}
+
+// ─── DRAG & SORT ───
+let dragSrcId = null;
+
+function setupDragSort() {
+  const items = document.querySelectorAll('.product-item[draggable]');
+  items.forEach(item => {
+    item.addEventListener('dragstart', e => {
+      dragSrcId = +item.dataset.id;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      document.querySelectorAll('.product-item').forEach(i => i.classList.remove('drag-over'));
+    });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      document.querySelectorAll('.product-item').forEach(i => i.classList.remove('drag-over'));
+      item.classList.add('drag-over');
+    });
+    item.addEventListener('drop', e => {
+      e.preventDefault();
+      const targetId = +item.dataset.id;
+      if (dragSrcId === targetId) return;
+      const srcIdx = products.findIndex(p => p.id === dragSrcId);
+      const tgtIdx = products.findIndex(p => p.id === targetId);
+      if (srcIdx < 0 || tgtIdx < 0) return;
+      // Reorder
+      const [moved] = products.splice(srcIdx, 1);
+      products.splice(tgtIdx, 0, moved);
+      persist();
+      renderAdminProducts();
+      renderCatalog();
+    });
+  });
 }
 
 function deleteProduct(id) {

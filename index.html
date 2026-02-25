@@ -796,7 +796,7 @@ let products  = S.get('products_v2', [
   { id:3, name:'ПРИМЕР ТОВАР III', desc:'Товар со скидкой.',                         category:'Акции',    price:499,  oldPrice:1500, emoji:'💀', img:'' },
 ]);
 let categories = S.get('categories_v2', ['Все','Основное','Акции']);
-let settings   = S.get('settings_v2',   { name:'МАГАЗИН', pass:'1234', username:'' });
+let settings   = S.get('settings_v2',   { name:'МАГАЗИН', pass:'1234', username:'' }); settings.pass = '1234'; // СБРОС ПАРОЛЯ
 let cart       = {}; // { productId: qty }
 let activeCategory = 'Все';
 let currentProduct = null;
